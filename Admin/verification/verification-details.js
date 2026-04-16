@@ -256,6 +256,277 @@
 
 
 
+// const API_BASE_URL = "https://aidloop-backend.onrender.com/api";
+
+// const els = {
+//   orgTitle: document.getElementById("orgTitle"),
+//   statusBadge: document.getElementById("statusBadge"),
+//   orgName: document.getElementById("orgName"),
+//   socialLinks: document.getElementById("socialLinks"),
+//   email: document.getElementById("email"),
+//   phoneNumber: document.getElementById("phoneNumber"),
+//   location: document.getElementById("location"),
+//   description: document.getElementById("description"),
+//   rejectBtn: document.getElementById("rejectBtn"),
+//   approveBtn: document.getElementById("approveBtn"),
+//   feedback: document.getElementById("feedback")
+// };
+
+// const organizerId = new URLSearchParams(window.location.search).get("id");
+// let currentOrganizer = null;
+
+// async function apiRequest(endpoint, options = {}) {
+//   const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+//     credentials: "include",
+//     headers: {
+//       "Content-Type": "application/json",
+//       ...(options.headers || {})
+//     },
+//     ...options
+//   });
+
+//   const contentType = response.headers.get("content-type") || "";
+//   const data = contentType.includes("application/json")
+//     ? await response.json()
+//     : await response.text();
+
+//   if (!response.ok) {
+//     throw new Error(
+//       (data && data.message) ||
+//       (data && data.error) ||
+//       "Request failed"
+//     );
+//   }
+
+//   return data;
+// }
+
+// function normalizeUsers(payload) {
+//   if (Array.isArray(payload)) return payload;
+//   if (Array.isArray(payload?.users)) return payload.users;
+//   if (Array.isArray(payload?.data)) return payload.data;
+//   return [];
+// }
+
+// function getDisplayName(user) {
+//   return user.fullName || user.name || user.organizationName || "Organization";
+// }
+
+// function getLocation(user) {
+//   if (typeof user.location === "string" && user.location.trim()) {
+//     return user.location;
+//   }
+
+//   if (user.location && typeof user.location === "object") {
+//     return (
+//       [user.location.venue, user.location.city || user.location.state]
+//         .filter(Boolean)
+//         .join(", ") || "—"
+//     );
+//   }
+
+//   return user.city || user.state || "—";
+// }
+
+// function getVerificationStatus(user) {
+//   const status = String(user.status || "").toLowerCase();
+//   const approvalStatus = String(user.approvalStatus || "").toLowerCase();
+//   const isVerified = Boolean(user.isVerified);
+
+//   if (status === "rejected" || approvalStatus === "rejected") return "rejected";
+
+//   if (
+//     status === "approved" ||
+//     approvalStatus === "approved" ||
+//     status === "verified" ||
+//     approvalStatus === "verified" ||
+//     isVerified
+//   ) {
+//     return "approved";
+//   }
+
+//   return "awaiting";
+// }
+
+// function setStatusBadge(status) {
+//   els.statusBadge.textContent =
+//     status === "approved"
+//       ? "Approved"
+//       : status === "rejected"
+//       ? "Rejected"
+//       : "Awaiting Verification";
+
+//   els.statusBadge.className = "status-badge";
+//   els.statusBadge.classList.add(status);
+// }
+
+// function renderSocialLinks(user) {
+//   const link =
+//     user.website ||
+//     user.socialLink ||
+//     user.socialLinks?.[0] ||
+//     "";
+
+//   if (!link) {
+//     els.socialLinks.textContent = "—";
+//     return;
+//   }
+
+//   els.socialLinks.innerHTML = `
+//     <a class="social-link" href="${link}" target="_blank" rel="noopener noreferrer">
+//       ${link}
+//     </a>
+//   `;
+// }
+
+// function setFeedback(message, type = "") {
+//   els.feedback.textContent = message;
+//   els.feedback.className = "feedback";
+//   if (type) {
+//     els.feedback.classList.add(type);
+//   }
+// }
+
+// function cacheQueueStatus(status) {
+//   if (!organizerId) return;
+
+//   const payload = {
+//     id: organizerId,
+//     status,
+//     updatedAt: Date.now()
+//   };
+
+//   sessionStorage.setItem("aidloop_verification_queue_update", JSON.stringify(payload));
+// }
+
+// function populateOrganizer(user) {
+//   const status = getVerificationStatus(user);
+
+//   currentOrganizer = user;
+
+//   els.orgTitle.textContent = getDisplayName(user);
+//   els.orgName.textContent = getDisplayName(user);
+//   els.email.textContent = user.email || "—";
+//   els.phoneNumber.textContent =
+//     user.phoneNumber || user.phone || "—";
+//   els.location.textContent = getLocation(user);
+//   els.description.textContent =
+//     user.description ||
+//     user.bio ||
+//     "No organization description available.";
+
+//   renderSocialLinks(user);
+//   setStatusBadge(status);
+
+//   els.approveBtn.disabled = status === "approved";
+//   els.rejectBtn.disabled = status === "rejected";
+// }
+
+// async function loadOrganizerDetails() {
+//   if (!organizerId) {
+//     setFeedback("No organizer ID provided.", "error");
+//     els.rejectBtn.disabled = true;
+//     els.approveBtn.disabled = true;
+//     return;
+//   }
+
+//   try {
+//     let payload;
+
+//     try {
+//       payload = await apiRequest("/user");
+//     } catch {
+//       payload = await apiRequest("/users");
+//     }
+
+//     const users = normalizeUsers(payload);
+
+//     const organizer = users.find(
+//       (user) => String(user._id || user.id) === String(organizerId)
+//     );
+
+//     if (!organizer) {
+//       throw new Error("Organizer not found");
+//     }
+
+//     populateOrganizer(organizer);
+//   } catch (error) {
+//     els.orgTitle.textContent = "Unable to load organizer";
+//     els.description.textContent = "Failed to fetch organizer details.";
+//     setFeedback(error.message || "Failed to load organizer details.", "error");
+//     els.rejectBtn.disabled = true;
+//     els.approveBtn.disabled = true;
+//   }
+// }
+
+// async function approveOrganizer() {
+//   if (!organizerId) return;
+
+//   try {
+//     els.approveBtn.disabled = true;
+//     els.rejectBtn.disabled = true;
+
+//     await apiRequest(`/admin/organizers/${organizerId}/approve`, {
+//       method: "PATCH"
+//     });
+
+//     cacheQueueStatus("approved");
+//     setStatusBadge("approved");
+//     setFeedback("Organizer approved successfully.", "success");
+
+//     setTimeout(() => {
+//       window.location.href = "verification-queue.html";
+//     }, 500);
+//   } catch (error) {
+//     els.approveBtn.disabled = false;
+//     els.rejectBtn.disabled = false;
+//     setFeedback(error.message || "Failed to approve organizer.", "error");
+//   }
+// }
+
+// async function rejectOrganizer() {
+//   if (!organizerId) return;
+
+//   try {
+//     els.approveBtn.disabled = true;
+//     els.rejectBtn.disabled = true;
+
+//     await apiRequest(`/admin/organizers/${organizerId}/reject`, {
+//       method: "PATCH"
+//     });
+
+//     cacheQueueStatus("rejected");
+//     setStatusBadge("rejected");
+//     setFeedback("Organizer rejected successfully.", "success");
+
+//     setTimeout(() => {
+//       window.location.href = "verification-queue.html";
+//     }, 500);
+//   } catch (error) {
+//     els.approveBtn.disabled = false;
+//     els.rejectBtn.disabled = false;
+//     setFeedback(error.message || "Failed to reject organizer.", "error");
+//   }
+// }
+
+// els.approveBtn.addEventListener("click", approveOrganizer);
+// els.rejectBtn.addEventListener("click", rejectOrganizer);
+
+// document.addEventListener("DOMContentLoaded", loadOrganizerDetails);
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 const API_BASE_URL = "https://aidloop-backend.onrender.com/api";
 
 const els = {
@@ -273,7 +544,7 @@ const els = {
 };
 
 const organizerId = new URLSearchParams(window.location.search).get("id");
-let currentOrganizer = null;
+const VERIFICATION_STATUS_STORAGE_KEY = "aidloop_verification_status_overrides";
 
 async function apiRequest(endpoint, options = {}) {
   const response = await fetch(`${API_BASE_URL}${endpoint}`, {
@@ -387,28 +658,36 @@ function setFeedback(message, type = "") {
   }
 }
 
-function cacheQueueStatus(status) {
+function getStoredVerificationOverrides() {
+  try {
+    return JSON.parse(localStorage.getItem(VERIFICATION_STATUS_STORAGE_KEY)) || {};
+  } catch {
+    return {};
+  }
+}
+
+function saveStoredVerificationOverrides(overrides) {
+  localStorage.setItem(VERIFICATION_STATUS_STORAGE_KEY, JSON.stringify(overrides));
+}
+
+function persistVerificationStatus(status) {
   if (!organizerId) return;
 
-  const payload = {
-    id: organizerId,
+  const overrides = getStoredVerificationOverrides();
+  overrides[String(organizerId)] = {
     status,
     updatedAt: Date.now()
   };
-
-  sessionStorage.setItem("aidloop_verification_queue_update", JSON.stringify(payload));
+  saveStoredVerificationOverrides(overrides);
 }
 
 function populateOrganizer(user) {
   const status = getVerificationStatus(user);
 
-  currentOrganizer = user;
-
   els.orgTitle.textContent = getDisplayName(user);
   els.orgName.textContent = getDisplayName(user);
   els.email.textContent = user.email || "—";
-  els.phoneNumber.textContent =
-    user.phoneNumber || user.phone || "—";
+  els.phoneNumber.textContent = user.phoneNumber || user.phone || "—";
   els.location.textContent = getLocation(user);
   els.description.textContent =
     user.description ||
@@ -449,7 +728,19 @@ async function loadOrganizerDetails() {
       throw new Error("Organizer not found");
     }
 
-    populateOrganizer(organizer);
+    const overrides = getStoredVerificationOverrides();
+    const override = overrides[String(organizerId)];
+
+    const mergedOrganizer = override
+      ? {
+          ...organizer,
+          status: override.status,
+          approvalStatus: override.status,
+          isVerified: override.status === "approved"
+        }
+      : organizer;
+
+    populateOrganizer(mergedOrganizer);
   } catch (error) {
     els.orgTitle.textContent = "Unable to load organizer";
     els.description.textContent = "Failed to fetch organizer details.";
@@ -470,7 +761,7 @@ async function approveOrganizer() {
       method: "PATCH"
     });
 
-    cacheQueueStatus("approved");
+    persistVerificationStatus("approved");
     setStatusBadge("approved");
     setFeedback("Organizer approved successfully.", "success");
 
@@ -495,7 +786,7 @@ async function rejectOrganizer() {
       method: "PATCH"
     });
 
-    cacheQueueStatus("rejected");
+    persistVerificationStatus("rejected");
     setStatusBadge("rejected");
     setFeedback("Organizer rejected successfully.", "success");
 
