@@ -1,4 +1,6 @@
-const API_BASE_URL = "https://aidloop-backend.onrender.com/api";
+import { apiRequest } from "../../assets/js/api.js";
+
+/* ---------------- ELEMENTS ---------------- */
 
 const els = {
   closeBtn: document.getElementById("closeBtn"),
@@ -14,34 +16,12 @@ const els = {
 
 const certificateId = new URLSearchParams(window.location.search).get("id");
 
-async function apiRequest(endpoint, options = {}) {
-  const response = await fetch(`${API_BASE_URL}${endpoint}`, {
-    credentials: "include",
-    headers: {
-      ...(options.headers || {})
-    },
-    ...options
-  });
-
-  const contentType = response.headers.get("content-type") || "";
-  const data = contentType.includes("application/json")
-    ? await response.json()
-    : await response.blob();
-
-  if (!response.ok) {
-    if (contentType.includes("application/json")) {
-      throw new Error(data.message || data.error || "Request failed");
-    }
-    throw new Error("Request failed");
-  }
-
-  return data;
-}
+/* ---------------- HELPERS ---------------- */
 
 function formatDate(dateValue) {
   if (!dateValue) return "—";
+
   const date = new Date(dateValue);
-  if (Number.isNaN(date.getTime())) return dateValue;
   return date.toLocaleDateString("en-GB", {
     day: "2-digit",
     month: "long",
@@ -52,55 +32,59 @@ function formatDate(dateValue) {
 function setFeedback(message, type = "") {
   els.feedback.textContent = message;
   els.feedback.className = "feedback";
-  if (type) {
-    els.feedback.classList.add(type);
-  }
+  if (type) els.feedback.classList.add(type);
 }
 
-function populateCertificate(data) {
-  els.volunteerName.textContent =
+function getVolunteerName(data) {
+  return (
     data.user?.fullName ||
-    data.user?.name ||
     data.volunteer?.fullName ||
-    data.volunteer?.name ||
-    data.volunteerName ||
-    "—";
+    data.user?.name ||
+    "—"
+  );
+}
 
-  els.eventName.textContent =
-    data.event?.name ||
-    data.eventName ||
-    "—";
+function getEventName(data) {
+  return data.event?.name || "—";
+}
+
+function getOrganizerName(data) {
+  return (
+    data.event?.organizer?.name ||
+    data.organizer?.name ||
+    "—"
+  );
+}
+
+/* ---------------- POPULATE ---------------- */
+
+function populateCertificate(data) {
+  els.volunteerName.textContent = getVolunteerName(data);
+  els.eventName.textContent = getEventName(data);
 
   els.phoneNumber.textContent =
     data.user?.phoneNumber ||
     data.user?.phone ||
-    data.volunteer?.phoneNumber ||
     data.volunteer?.phone ||
-    data.phoneNumber ||
     "—";
 
-  els.organizerName.textContent =
-    data.organizer?.fullName ||
-    data.organizer?.name ||
-    data.event?.organizer?.fullName ||
-    data.event?.organizer?.name ||
-    data.organizerName ||
-    "—";
+  els.organizerName.textContent = getOrganizerName(data);
 
   els.eventDate.textContent = formatDate(
     data.event?.date ||
-    data.eventDate ||
     data.issuedAt ||
     data.createdAt
   );
 
-  const status = String(data.status || "issued").toUpperCase();
-  els.certificateStatus.textContent = status;
+  // 🔥 always issued in your system
+  els.certificateStatus.textContent = "ISSUED";
 }
+
+/* ---------------- LOAD ---------------- */
 
 async function loadCertificate() {
   if (!certificateId) {
-    setFeedback("No certificate ID provided.", "error");
+    setFeedback("Invalid certificate link", "error");
     els.downloadBtn.disabled = true;
     return;
   }
@@ -108,12 +92,14 @@ async function loadCertificate() {
   try {
     const data = await apiRequest(`/certificates/verify/${certificateId}`);
     populateCertificate(data);
-    setFeedback("Certificate loaded successfully.", "success");
-  } catch (error) {
-    setFeedback(error.message || "Failed to load certificate.", "error");
+
+  } catch (err) {
+    setFeedback(err.message || "Failed to load certificate", "error");
     els.downloadBtn.disabled = true;
   }
 }
+
+/* ---------------- DOWNLOAD ---------------- */
 
 async function downloadCertificate() {
   if (!certificateId) return;
@@ -122,36 +108,56 @@ async function downloadCertificate() {
     els.downloadBtn.disabled = true;
     els.downloadBtn.textContent = "Downloading...";
 
-    const blob = await apiRequest(`/certificates/download/${certificateId}`);
+    const blob = await apiRequest(
+      `/certificates/download/${certificateId}`,
+      {
+        method: "GET"
+      }
+    );
+
+    if (!(blob instanceof Blob)) {
+      throw new Error("Invalid file response");
+    }
+
     const url = URL.createObjectURL(blob);
+
+    // 🔥 better filename
+    const fileName = `AidLoop-Certificate-${certificateId}.pdf`;
 
     const link = document.createElement("a");
     link.href = url;
-    link.download = `certificate-${certificateId}.pdf`;
+    link.download = fileName;
+
     document.body.appendChild(link);
     link.click();
     link.remove();
 
     URL.revokeObjectURL(url);
-    setFeedback("Certificate downloaded successfully.", "success");
-  } catch (error) {
-    setFeedback(error.message || "Failed to download certificate.", "error");
+
+    setFeedback("Download successful", "success");
+
+  } catch (err) {
+    setFeedback(err.message || "Download failed", "error");
   } finally {
     els.downloadBtn.disabled = false;
     els.downloadBtn.textContent = "Download Certificate";
   }
 }
 
-function closePreview() {
-  if (window.history.length > 1) {
-    window.history.back();
-    return;
-  }
+/* ---------------- CLOSE ---------------- */
 
+function closePreview() {
   window.location.href = "certificates.html";
 }
 
-els.closeBtn.addEventListener("click", closePreview);
-els.downloadBtn.addEventListener("click", downloadCertificate);
+/* ---------------- INIT ---------------- */
 
-document.addEventListener("DOMContentLoaded", loadCertificate);
+function bindUI() {
+  els.closeBtn?.addEventListener("click", closePreview);
+  els.downloadBtn?.addEventListener("click", downloadCertificate);
+}
+
+document.addEventListener("DOMContentLoaded", () => {
+  bindUI();
+  loadCertificate();
+});

@@ -1,4 +1,17 @@
-const API_BASE_URL = "https://aidloop-backend.onrender.com/api";
+import { apiRequest } from "../../assets/js/api.js";
+import { normalizeArray } from "../../assets/js/utils.js";
+import { loadAdminProfile } from "../../assets/js/admin/admin-auth.js";
+import {
+  getEventTitle,
+  getEventId,
+  getEventStatus,
+  formatDate
+} from "../../assets/js/admin/admin-events.js";
+
+import { getFlaggedEvents } from "../../assets/js/admin/admin-flags.js";
+import { autoFlagIfRepeatedCancellation } from "../../assets/js/admin/admin-flags.js";
+import { logout } from "../../assets/js/logout.js";
+import { ROUTES } from "../../assets/js/config.js";
 
 const els = {
   adminName: document.getElementById("adminName"),
@@ -9,143 +22,47 @@ const els = {
   emptyState: document.getElementById("emptyState"),
   searchInput: document.getElementById("searchInput"),
   filterButtons: document.querySelectorAll(".filter-btn"),
-  logoutBtn: document.getElementById("logoutBtn"),
-  logoutModal: document.getElementById("logoutModal"),
-  closeLogoutModal: document.getElementById("closeLogoutModal"),
-  cancelLogout: document.getElementById("cancelLogout"),
-  confirmLogout: document.getElementById("confirmLogout")
+  logoutBtn: document.getElementById("logoutBtn")
 };
 
 let flagsCache = [];
 let currentFilter = "all";
 
-async function apiRequest(endpoint, options = {}) {
-  const response = await fetch(`${API_BASE_URL}${endpoint}`, {
-    credentials: "include",
-    headers: {
-      "Content-Type": "application/json",
-      ...(options.headers || {})
-    },
-    ...options
-  });
+/* ---------------- FETCH EVENTS ---------------- */
 
-  const contentType = response.headers.get("content-type") || "";
-  const data = contentType.includes("application/json")
-    ? await response.json()
-    : await response.text();
-
-  if (!response.ok) {
-    throw new Error(
-      (data && data.message) ||
-      (data && data.error) ||
-      "Request failed"
-    );
-  }
-
-  return data;
+async function fetchEvents() {
+  const payload = await apiRequest("/events");
+  return normalizeArray(payload, ["events"]);
 }
 
-function normalizeUsers(payload) {
-  if (Array.isArray(payload)) return payload;
-  if (Array.isArray(payload?.users)) return payload.users;
-  if (Array.isArray(payload?.data)) return payload.data;
-  return [];
-}
-
-function normalizeEvents(payload) {
-  if (Array.isArray(payload)) return payload;
-  if (Array.isArray(payload?.events)) return payload.events;
-  if (Array.isArray(payload?.data)) return payload.data;
-  return [];
-}
-
-function formatDate(dateValue) {
-  if (!dateValue) return "—";
-  const date = new Date(dateValue);
-  if (Number.isNaN(date.getTime())) return dateValue;
-  return date.toLocaleDateString("en-GB", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric"
-  });
-}
-
-function getOrganizerStatus(user) {
-  const status = String(user.status || "").toLowerCase();
-  const approvalStatus = String(user.approvalStatus || "").toLowerCase();
-  const isVerified = Boolean(user.isVerified);
-
-  if (status === "rejected" || approvalStatus === "rejected") return "rejected";
-  if (
-    status === "verified" ||
-    status === "approved" ||
-    approvalStatus === "verified" ||
-    approvalStatus === "approved" ||
-    isVerified
-  ) {
-    return "verified";
-  }
-  return "pending";
-}
+/* ---------------- BUILD FLAGS ---------------- */
 
 function getSeverity(count) {
-  if (count <= 2) return "low";
-  if (count <= 4) return "medium";
+  if (count <= 1) return "low";
+  if (count <= 3) return "medium";
   return "high";
 }
 
-function getSeverityLabel(count) {
-  const severity = getSeverity(count);
-  return severity.charAt(0).toUpperCase() + severity.slice(1);
-}
-
-function getOrganizerName(user) {
-  return user.fullName || user.name || user.organizationName || "Organization";
-}
-
-function buildFlags(users, events) {
-  const organizers = users.filter(
-    (user) => String(user.role || "").toLowerCase() === "organizer"
-  );
-
-  return organizers
-    .map((organizer) => {
-      const organizerId = String(organizer._id || organizer.id || "");
-
-      const organizerEvents = events.filter((event) => {
-        const eventOrganizerId =
-          String(event.organizer?._id || event.organizer?.id || event.organizerId || "");
-        return eventOrganizerId === organizerId;
-      });
-
-      const cancelledEvents = organizerEvents.filter((event) => {
-        const status = String(event.status || "").toLowerCase();
-        return status.includes("cancel");
-      });
-
-      if (!cancelledEvents.length) return null;
-
-      const latestCancelled = cancelledEvents.sort(
-        (a, b) => new Date(b.date || b.updatedAt || b.createdAt || 0) - new Date(a.date || a.updatedAt || a.createdAt || 0)
-      )[0];
+function buildFlags(events, flaggedMap) {
+  return events
+    .filter((event) => flaggedMap[getEventId(event)])
+    .map((event) => {
+      const flagData = flaggedMap[getEventId(event)];
 
       return {
-        id: organizerId,
-        status: getOrganizerStatus(organizer),
-        name: getOrganizerName(organizer),
-        cancellations: cancelledEvents.length,
-        severity: getSeverity(cancelledEvents.length),
-        severityLabel: getSeverityLabel(cancelledEvents.length),
-        lastEventDate: latestCancelled?.date || latestCancelled?.updatedAt || latestCancelled?.createdAt || "",
-        reason:
-          latestCancelled?.cancelReason ||
-          latestCancelled?.reason ||
-          "Frequent cancellations"
+        id: getEventId(event),
+        name: getEventTitle(event),
+        status: getEventStatus(event),
+        reason: flagData.reason,
+        date: flagData.flaggedAt,
+        severity: getSeverity(1),
+        severityLabel: getSeverity(1).toUpperCase()
       };
     })
-    .filter(Boolean)
-    .sort((a, b) => new Date(b.lastEventDate || 0) - new Date(a.lastEventDate || 0));
+    .sort((a, b) => b.date - a.date);
 }
+
+/* ---------------- RENDER ---------------- */
 
 function renderFlags() {
   const query = els.searchInput.value.trim().toLowerCase();
@@ -153,20 +70,18 @@ function renderFlags() {
   let filtered = [...flagsCache];
 
   if (currentFilter !== "all") {
-    filtered = filtered.filter((item) => item.status === currentFilter);
+    filtered = filtered.filter((f) => f.status === currentFilter);
   }
 
   if (query) {
-    filtered = filtered.filter((item) => {
-      const searchableText = `
-        ${item.name}
-        ${item.cancellations}
-        ${item.severityLabel}
-        ${formatDate(item.lastEventDate)}
-        ${item.reason}
+    filtered = filtered.filter((f) => {
+      const text = `
+        ${f.name}
+        ${f.reason}
+        ${f.status}
       `.toLowerCase();
 
-      return searchableText.includes(query);
+      return text.includes(query);
     });
   }
 
@@ -179,139 +94,99 @@ function renderFlags() {
   els.flagsTableWrap.style.display = "table";
   els.emptyState.style.display = "none";
 
-  els.flagsTable.innerHTML = filtered.map((item) => `
+  els.flagsTable.innerHTML = filtered.map((f) => `
     <tr>
-      <td>${item.name}</td>
-      <td>${item.cancellations}</td>
+      <td>${f.name}</td>
+      <td>1</td>
       <td>
-        <span class="severity-badge ${item.severity}">
-          ${item.severityLabel}
+        <span class="severity-badge ${f.severity}">
+          ${f.severityLabel}
         </span>
       </td>
-      <td>${formatDate(item.lastEventDate)}</td>
-      <td>${item.reason}</td>
+      <td>${formatDate(f.date)}</td>
+      <td>${f.reason}</td>
       <td>
-        <a class="action-link" href="flag-details.html?id=${encodeURIComponent(item.id)}">
-          Review
+        <a href="../events/event-details.html?id=${encodeURIComponent(f.id)}">
+          View Event
         </a>
       </td>
     </tr>
   `).join("");
 }
 
+/* ---------------- FILTER ---------------- */
+
 function bindFilters() {
-  els.filterButtons.forEach((button) => {
-    button.addEventListener("click", () => {
-      els.filterButtons.forEach((btn) => btn.classList.remove("active"));
-      button.classList.add("active");
-      currentFilter = button.dataset.filter;
+  els.filterButtons.forEach((btn) => {
+    btn.addEventListener("click", () => {
+      els.filterButtons.forEach((b) => b.classList.remove("active"));
+      btn.classList.add("active");
+      currentFilter = btn.dataset.filter;
       renderFlags();
     });
   });
 }
 
-function openLogoutModal() {
-  els.logoutModal.classList.remove("hidden");
-}
+/* ---------------- LOAD ---------------- */
 
-function closeLogoutModal() {
-  els.logoutModal.classList.add("hidden");
-  els.confirmLogout.disabled = false;
-  els.confirmLogout.textContent = "Yes, Log out";
-}
+// async function loadFlags() {
+//   try {
+//     const [events, flaggedMap] = await Promise.all([
+//       fetchEvents(),
+//       getFlaggedEvents()
+//     ]);
 
-async function handleLogout() {
-  try {
-    els.confirmLogout.disabled = true;
-    els.confirmLogout.textContent = "Logging out...";
-
-    await apiRequest("/auth/logout", {
-      method: "POST"
-    });
-  } catch (error) {
-    console.warn("Logout failed:", error.message);
-  } finally {
-    localStorage.clear();
-    sessionStorage.clear();
-    window.location.href = "../../index.html";
-  }
-}
-
-async function loadAdminProfile() {
-  try {
-    let profile;
-    try {
-      profile = await apiRequest("/users/me");
-    } catch {
-      profile = await apiRequest("/user/me");
-    }
-
-    els.adminName.textContent =
-      profile.fullName ||
-      profile.name ||
-      "Admin User";
-
-    els.adminRole.textContent =
-      profile.role
-        ? profile.role.charAt(0).toUpperCase() + profile.role.slice(1)
-        : "Admin";
-
-    if (profile.profileImage) {
-      els.adminAvatar.src = profile.profileImage;
-    }
-  } catch (error) {
-    console.error("Failed to load admin profile:", error.message);
-    window.location.href = "../profile/admin-profile.html";
-  }
-}
+//     flagsCache = buildFlags(events, flaggedMap);
+//     renderFlags();
+//   } catch (err) {
+//     els.flagsTable.innerHTML = `
+//       <tr>
+//         <td colspan="6">Failed to load flags</td>
+//       </tr>
+//     `;
+//   }
+// }
 
 async function loadFlags() {
   try {
-    const [usersPayload, eventsPayload] = await Promise.all([
-      apiRequest("/user").catch(() => apiRequest("/users")),
-      apiRequest("/events")
-    ]);
+    const events = await fetchEvents();
 
-    const users = normalizeUsers(usersPayload);
-    const events = normalizeEvents(eventsPayload);
+    // 🔥 NEW: auto detect repeated cancellations
+    autoFlagIfRepeatedCancellation(events);
 
-    flagsCache = buildFlags(users, events);
+    const flaggedMap = getFlaggedEvents();
+
+    flagsCache = buildFlags(events, flaggedMap);
+
     renderFlags();
-  } catch (error) {
-    console.error("Failed to load flags:", error.message);
+  } catch (err) {
     els.flagsTable.innerHTML = `
       <tr>
-        <td colspan="6">Failed to load flags.</td>
+        <td colspan="6">Failed to load flags</td>
       </tr>
     `;
   }
 }
 
+/* ---------------- INIT ---------------- */
+
 function bindUI() {
   els.searchInput.addEventListener("input", renderFlags);
-
   bindFilters();
 
-  els.logoutBtn.addEventListener("click", openLogoutModal);
-  els.closeLogoutModal.addEventListener("click", closeLogoutModal);
-  els.cancelLogout.addEventListener("click", closeLogoutModal);
-  els.confirmLogout.addEventListener("click", handleLogout);
-
-  els.logoutModal.addEventListener("click", (event) => {
-    if (event.target === els.logoutModal) {
-      closeLogoutModal();
-    }
-  });
-
-  document.addEventListener("keydown", (event) => {
-    if (event.key === "Escape" && !els.logoutModal.classList.contains("hidden")) {
-      closeLogoutModal();
-    }
+  els.logoutBtn?.addEventListener("click", () => {
+    logout(ROUTES.landing);
   });
 }
 
 document.addEventListener("DOMContentLoaded", async () => {
   bindUI();
-  await loadAdminProfile();
+
+  await loadAdminProfile({
+    nameEl: els.adminName,
+    roleEl: els.adminRole,
+    avatarEl: els.adminAvatar
+  });
+
   await loadFlags();
 });

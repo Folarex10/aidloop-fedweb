@@ -1,4 +1,6 @@
-const API_BASE_URL = "https://aidloop-backend.onrender.com/api";
+import { apiRequest } from "../../assets/js/api.js";
+import { requireRole } from "../../assets/js/auth.js";
+import { ROUTES } from "../../assets/js/config.js";
 
 const els = {
   userTitle: document.getElementById("userTitle"),
@@ -18,31 +20,7 @@ const els = {
 const userId = new URLSearchParams(window.location.search).get("id");
 let currentUser = null;
 
-async function apiRequest(endpoint, options = {}) {
-  const response = await fetch(`${API_BASE_URL}${endpoint}`, {
-    credentials: "include",
-    headers: {
-      "Content-Type": "application/json",
-      ...(options.headers || {})
-    },
-    ...options
-  });
-
-  const contentType = response.headers.get("content-type") || "";
-  const data = contentType.includes("application/json")
-    ? await response.json()
-    : await response.text();
-
-  if (!response.ok) {
-    throw new Error(
-      (data && data.message) ||
-      (data && data.error) ||
-      "Request failed"
-    );
-  }
-
-  return data;
-}
+/* ---------------- HELPERS ---------------- */
 
 function normalizeUsers(payload) {
   if (Array.isArray(payload)) return payload;
@@ -54,7 +32,6 @@ function normalizeUsers(payload) {
 function formatDate(dateValue) {
   if (!dateValue) return "—";
   const date = new Date(dateValue);
-  if (Number.isNaN(date.getTime())) return dateValue;
   return date.toLocaleDateString("en-GB", {
     day: "2-digit",
     month: "long",
@@ -67,9 +44,7 @@ function getDisplayName(user) {
 }
 
 function getLocation(user) {
-  if (typeof user.location === "string" && user.location.trim()) {
-    return user.location;
-  }
+  if (typeof user.location === "string") return user.location;
 
   if (user.location && typeof user.location === "object") {
     return (
@@ -90,16 +65,17 @@ function getStatus(user) {
   return user.isActive === false ? "deactivated" : "active";
 }
 
+/* ---------------- UI ---------------- */
+
 function setFeedback(message, type = "") {
   els.feedback.textContent = message;
   els.feedback.className = "feedback";
-  if (type) {
-    els.feedback.classList.add(type);
-  }
+  if (type) els.feedback.classList.add(type);
 }
 
 function setRoleBadge(role) {
-  els.roleBadge.textContent = role.charAt(0).toUpperCase() + role.slice(1);
+  els.roleBadge.textContent =
+    role.charAt(0).toUpperCase() + role.slice(1);
   els.roleBadge.className = "role-badge";
   els.roleBadge.classList.add(role);
 }
@@ -119,9 +95,11 @@ function syncButtons(status) {
   } else {
     els.deactivateBtn.disabled = false;
     els.deactivateBtn.textContent = "Deactivate";
-    els.reactivateBtn.disabled = false;
+    els.reactivateBtn.disabled = true;
   }
 }
+
+/* ---------------- POPULATE ---------------- */
 
 function populateUser(user) {
   currentUser = user;
@@ -134,51 +112,45 @@ function populateUser(user) {
   els.email.textContent = user.email || "—";
   els.phoneNumber.textContent = user.phoneNumber || user.phone || "—";
   els.location.textContent = getLocation(user);
-  els.dateJoined.textContent = formatDate(user.createdAt || user.dateJoined);
+  els.dateJoined.textContent = formatDate(user.createdAt);
   els.description.textContent =
-    user.description ||
-    user.bio ||
-    "No description available.";
+    user.description || user.bio || "No description available.";
 
   setRoleBadge(role);
   setStatusBadge(status);
   syncButtons(status);
 }
 
+/* ---------------- LOAD ---------------- */
+
 async function loadUserDetails() {
   if (!userId) {
-    els.userTitle.textContent = "No user selected";
-    els.description.textContent = "No user ID provided.";
-    els.deactivateBtn.disabled = true;
-    els.reactivateBtn.disabled = true;
+    setFeedback("No user ID provided", "error");
     return;
   }
 
   try {
-    const payload = await apiRequest("/user").catch(() => apiRequest("/users"));
+    const payload = await apiRequest("/user")
+      .catch(() => apiRequest("/users"));
+
     const users = normalizeUsers(payload);
 
     const user = users.find(
-      (item) => String(item._id || item.id) === String(userId)
+      (u) => String(u._id || u.id) === String(userId)
     );
 
-    if (!user) {
-      throw new Error("User not found");
-    }
+    if (!user) throw new Error("User not found");
 
     populateUser(user);
-  } catch (error) {
-    els.userTitle.textContent = "Unable to load user";
-    els.description.textContent = error.message || "Failed to fetch user details.";
-    els.deactivateBtn.disabled = true;
-    els.reactivateBtn.disabled = true;
-    setFeedback(error.message || "Failed to load user details.", "error");
+
+  } catch (err) {
+    setFeedback(err.message, "error");
   }
 }
 
-async function deactivateUser() {
-  if (!userId) return;
+/* ---------------- ACTIONS ---------------- */
 
+async function deactivateUser() {
   try {
     els.deactivateBtn.disabled = true;
     els.deactivateBtn.textContent = "Deactivating...";
@@ -187,28 +159,46 @@ async function deactivateUser() {
       method: "PATCH"
     });
 
-    currentUser = {
-      ...currentUser,
-      isActive: false
-    };
+    currentUser.isActive = false;
 
     setStatusBadge("deactivated");
     syncButtons("deactivated");
-    setFeedback("User deactivated successfully.", "success");
-  } catch (error) {
-    syncButtons(getStatus(currentUser || {}));
-    setFeedback(error.message || "Failed to deactivate user.", "error");
+    setFeedback("User deactivated successfully", "success");
+
+  } catch (err) {
+    syncButtons(getStatus(currentUser));
+    setFeedback(err.message, "error");
   }
 }
 
-function handleReactivate() {
-  setFeedback(
-    "No reactivation endpoint has been provided yet.",
-    "error"
-  );
+async function reactivateUser() {
+  try {
+    els.reactivateBtn.disabled = true;
+    els.reactivateBtn.textContent = "Reactivating...";
+
+    await apiRequest(`/admin/users/${userId}/reactivate`, {
+      method: "PATCH"
+    });
+
+    currentUser.isActive = true;
+
+    setStatusBadge("active");
+    syncButtons("active");
+    setFeedback("User reactivated successfully", "success");
+
+  } catch (err) {
+    syncButtons(getStatus(currentUser));
+    setFeedback(err.message, "error");
+  }
 }
 
-els.deactivateBtn.addEventListener("click", deactivateUser);
-els.reactivateBtn.addEventListener("click", handleReactivate);
+/* ---------------- INIT ---------------- */
 
-document.addEventListener("DOMContentLoaded", loadUserDetails);
+document.addEventListener("DOMContentLoaded", async () => {
+  await requireRole("admin", ROUTES.adminLogin);
+
+  els.deactivateBtn.addEventListener("click", deactivateUser);
+  els.reactivateBtn.addEventListener("click", reactivateUser);
+
+  await loadUserDetails();
+});

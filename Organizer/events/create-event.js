@@ -1,246 +1,149 @@
-// import { apiRequest } from "../../assets/js/api.js";
-// import { ROUTES } from "../../assets/js/config.js";
-// import { logout } from "../../assets/js/logout.js";
-
-// const roles = [];
-// let imageUrl = "";
-
-// const els = {
-//   form: document.getElementById("eventForm"),
-//   roleInput: document.getElementById("roleInput"),
-//   addRole: document.getElementById("addRole"),
-//   rolesList: document.getElementById("rolesList"),
-//   imageInput: document.getElementById("imageInput"),
-//   imageBox: document.getElementById("imageBox"),
-//   formMsg: document.getElementById("formMsg"),
-//   saveDraft: document.getElementById("saveDraft"),
-//   logoutBtn: document.getElementById("logoutBtn")
-// };
-
-// /* IMAGE */
-// els.imageBox.addEventListener("click", () => els.imageInput.click());
-
-// els.imageInput.addEventListener("change", async (e) => {
-//   const file = e.target.files[0];
-//   if (!file) return;
-
-//   // TEMP: Replace with Cloudinary later
-//   imageUrl = URL.createObjectURL(file);
-//   els.imageBox.innerHTML = `<img src="${imageUrl}" style="max-width:100%">`;
-// });
-
-// /* ROLES */
-// els.addRole.addEventListener("click", () => {
-//   const val = els.roleInput.value.trim();
-//   if (!val) return;
-
-//   roles.push(val);
-//   els.roleInput.value = "";
-//   renderRoles();
-// });
-
-// function renderRoles() {
-//   els.rolesList.innerHTML = roles.map(r => `<span>${r}</span>`).join("");
-// }
-
-// /* CREATE EVENT */
-// async function createEvent(status = "draft") {
-//   const payload = {
-//     name: document.getElementById("name").value,
-//     category: document.getElementById("category").value,
-//     description: document.getElementById("description").value,
-//     location: {
-//       venue: document.getElementById("venue").value,
-//       city: document.getElementById("city").value
-//     },
-//     image: imageUrl,
-//     date: document.getElementById("date").value,
-//     startTime: document.getElementById("startTime").value,
-//     endTime: document.getElementById("endTime").value,
-//     volunteerSlots: Number(document.getElementById("slots").value),
-//     roles,
-//     certificateEnabled: document.getElementById("certificateEnabled").checked,
-//     requirements: document
-//       .getElementById("requirements")
-//       .value.split("\n")
-//   };
-
-//   try {
-//     const res = await apiRequest("/events", {
-//       method: "POST",
-//       body: JSON.stringify(payload)
-//     });
-
-//     const eventId = res._id || res.id;
-
-//     if (status === "published") {
-//       await apiRequest(`/events/${eventId}/status`, {
-//         method: "PATCH",
-//         body: JSON.stringify({ status: "published" })
-//       });
-//     }
-
-//     els.formMsg.textContent = "Event created successfully!";
-//     window.location.href = ROUTES.organizerDashboard;
-
-//   } catch (err) {
-//     els.formMsg.textContent = err.message;
-//   }
-// }
-
-// /* ACTIONS */
-// els.form.addEventListener("submit", (e) => {
-//   e.preventDefault();
-//   createEvent("published");
-// });
-
-// els.saveDraft.addEventListener("click", () => createEvent("draft"));
-
-// /* LOGOUT */
-// els.logoutBtn.addEventListener("click", () => {
-//   logout(ROUTES.organizerLogin);
-// });
-
-
-
-
-
-
-
-
-
-
-
 import { apiRequest } from "../../assets/js/api.js";
-import { ROUTES } from "../../assets/js/config.js";
+import { requireOrganizer } from "../../assets/js/auth.js";
 import { logout } from "../../assets/js/logout.js";
-
-const roles = [];
-let imageUrl = "";
+import { ROUTES } from "../../assets/js/config.js";
 
 const els = {
   form: document.getElementById("eventForm"),
+  name: document.getElementById("name"),
+  category: document.getElementById("category"),
+  description: document.getElementById("description"),
+  venue: document.getElementById("venue"),
+  city: document.getElementById("city"),
+  date: document.getElementById("date"),
+  startTime: document.getElementById("startTime"),
+  endTime: document.getElementById("endTime"),
+  slots: document.getElementById("slots"),
+  requirements: document.getElementById("requirements"),
+  certificateEnabled: document.getElementById("certificateEnabled"),
+
   roleInput: document.getElementById("roleInput"),
   addRole: document.getElementById("addRole"),
   rolesList: document.getElementById("rolesList"),
+
   imageInput: document.getElementById("imageInput"),
   imageBox: document.getElementById("imageBox"),
-  formMsg: document.getElementById("formMsg"),
+
   saveDraft: document.getElementById("saveDraft"),
+  formMsg: document.getElementById("formMsg"),
   logoutBtn: document.getElementById("logoutBtn")
 };
 
-/* IMAGE */
-els.imageBox?.addEventListener("click", () => els.imageInput?.click());
+const eventId = new URLSearchParams(window.location.search).get("id");
 
-els.imageInput?.addEventListener("change", async (e) => {
-  const file = e.target.files?.[0];
-  if (!file) return;
+let roles = [];
+let imageFile = null;
+let isEditMode = false;
 
-  // Temporary local preview
-  imageUrl = URL.createObjectURL(file);
-  els.imageBox.innerHTML = `<img src="${imageUrl}" alt="Event image preview" style="max-width:100%; border-radius:12px;">`;
-});
+/* ---------------- MESSAGE ---------------- */
 
-/* ROLES */
-els.addRole?.addEventListener("click", () => {
-  const val = els.roleInput.value.trim();
-  if (!val) return;
+function setMessage(message, type = "") {
+  if (!els.formMsg) return;
 
-  if (!roles.includes(val)) {
-    roles.push(val);
-  }
+  els.formMsg.textContent = message;
+  els.formMsg.className = "form-message";
+  if (type) els.formMsg.classList.add(type);
+}
 
-  els.roleInput.value = "";
-  renderRoles();
-});
+/* ---------------- ROLES ---------------- */
 
 function renderRoles() {
   els.rolesList.innerHTML = roles
-    .map((role, index) => `
+    .map((role, i) => `
       <span class="role-chip">
         ${role}
-        <button type="button" data-index="${index}" class="remove-role-btn">&times;</button>
+        <button type="button" data-index="${i}" class="remove-role-btn">&times;</button>
       </span>
     `)
     .join("");
 
-  document.querySelectorAll(".remove-role-btn").forEach((button) => {
-    button.addEventListener("click", () => {
-      const index = Number(button.dataset.index);
-      roles.splice(index, 1);
+  document.querySelectorAll(".remove-role-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      roles.splice(Number(btn.dataset.index), 1);
       renderRoles();
     });
   });
 }
 
-function setMessage(message, type = "") {
-  if (!els.formMsg) return;
-  els.formMsg.textContent = message;
-  els.formMsg.className = "form-message";
-  if (type) {
-    els.formMsg.classList.add(type);
-  }
+/* ---------------- IMAGE ---------------- */
+
+function handleImageChange(e) {
+  const file = e.target.files?.[0];
+  if (!file) return;
+
+  imageFile = file;
+
+  const preview = URL.createObjectURL(file);
+  els.imageBox.innerHTML = `<img src="${preview}" style="max-width:100%; border-radius:12px;">`;
 }
 
-function getEventPayload() {
+/* ---------------- VALIDATION ---------------- */
+
+function validateForm() {
+  if (!els.name.value.trim()) return "Event name is required";
+  if (!els.date.value) return "Event date is required";
+  if (!els.slots.value) return "Volunteer slots required";
+  return null;
+}
+
+/* ---------------- PAYLOAD ---------------- */
+
+function getPayload() {
   return {
-    name: document.getElementById("name")?.value.trim(),
-    category: document.getElementById("category")?.value.trim(),
-    description: document.getElementById("description")?.value.trim(),
+    name: els.name.value.trim(),
+    category: els.category.value.trim(),
+    description: els.description.value.trim(),
     location: {
-      venue: document.getElementById("venue")?.value.trim(),
-      city: document.getElementById("city")?.value.trim()
+      venue: els.venue.value.trim(),
+      city: els.city.value.trim()
     },
-    image: imageUrl,
-    date: document.getElementById("date")?.value,
-    startTime: document.getElementById("startTime")?.value.trim(),
-    endTime: document.getElementById("endTime")?.value.trim(),
-    volunteerSlots: Number(document.getElementById("slots")?.value || 0),
+    date: els.date.value,
+    startTime: els.startTime.value.trim(),
+    endTime: els.endTime.value.trim(),
+    volunteerSlots: Number(els.slots.value || 0),
     roles,
-    certificateEnabled: document.getElementById("certificateEnabled")?.checked || false,
-    requirements: document
-      .getElementById("requirements")
-      ?.value.split("\n")
-      .map((item) => item.trim())
-      .filter(Boolean) || []
+    certificateEnabled: els.certificateEnabled.checked,
+    requirements: els.requirements.value
+      .split("\n")
+      .map((r) => r.trim())
+      .filter(Boolean)
   };
 }
 
-function extractEventId(res) {
-  return (
-    res?._id ||
-    res?.id ||
-    res?.event?._id ||
-    res?.event?.id ||
-    res?.data?._id ||
-    res?.data?.id ||
-    ""
-  );
-}
+/* ---------------- CREATE / UPDATE ---------------- */
 
-/* CREATE EVENT */
-async function createEvent(status = "draft") {
-  const payload = getEventPayload();
+async function submitEvent(status = "published") {
+  const error = validateForm();
+  if (error) {
+    setMessage(error, "error");
+    return;
+  }
 
   try {
-    setMessage(status === "published" ? "Creating and publishing event..." : "Saving draft...");
+    setMessage("Saving event...");
+    els.form.querySelector("button[type='submit']").disabled = true;
 
-    const res = await apiRequest("/events", {
-      method: "POST",
-      body: JSON.stringify(payload)
-    });
+    const payload = getPayload();
 
-    console.log("Create event response:", res);
+    let res;
 
-    const eventId = extractEventId(res);
-
-    if (!eventId) {
-      throw new Error("Event created but no event ID was returned by the backend.");
+    if (isEditMode) {
+      res = await apiRequest(`/events/${eventId}`, {
+        method: "PUT",
+        body: JSON.stringify(payload)
+      });
+    } else {
+      res = await apiRequest("/events", {
+        method: "POST",
+        body: JSON.stringify(payload)
+      });
     }
 
+    const id =
+      res?._id || res?.id || res?.event?._id || res?.event?.id;
+
     if (status === "published") {
-      await apiRequest(`/events/${eventId}/status`, {
+      await apiRequest(`/events/${id}/status`, {
         method: "PATCH",
         body: JSON.stringify({ status: "published" })
       });
@@ -256,24 +159,81 @@ async function createEvent(status = "draft") {
     setTimeout(() => {
       window.location.href = ROUTES.organizerDashboard;
     }, 800);
+
   } catch (err) {
-    console.error("Create/publish event error:", err);
-    setMessage(err.message || "Something went wrong.", "error");
+    setMessage(err.message || "Something went wrong", "error");
+  } finally {
+    els.form.querySelector("button[type='submit']").disabled = false;
   }
 }
 
-/* ACTIONS */
-els.form?.addEventListener("submit", (e) => {
-  e.preventDefault();
-  createEvent("published");
-});
+/* ---------------- LOAD (EDIT MODE) ---------------- */
 
-els.saveDraft?.addEventListener("click", (e) => {
-  e.preventDefault();
-  createEvent("draft");
-});
+async function loadEvent() {
+  if (!eventId) return;
 
-/* LOGOUT */
-els.logoutBtn?.addEventListener("click", () => {
-  logout(ROUTES.organizerLogin);
+  try {
+    const data = await apiRequest(`/events/${eventId}`);
+
+    isEditMode = true;
+
+    els.name.value = data.name || "";
+    els.category.value = data.category || "";
+    els.description.value = data.description || "";
+    els.venue.value = data.location?.venue || "";
+    els.city.value = data.location?.city || "";
+    els.date.value = data.date || "";
+    els.startTime.value = data.startTime || "";
+    els.endTime.value = data.endTime || "";
+    els.slots.value = data.volunteerSlots || 0;
+    els.requirements.value = (data.requirements || []).join("\n");
+
+    roles = data.roles || [];
+    renderRoles();
+
+    if (data.image) {
+      els.imageBox.innerHTML = `<img src="${data.image}" style="max-width:100%; border-radius:12px;">`;
+    }
+
+  } catch (err) {
+    setMessage("Failed to load event data", "error");
+  }
+}
+
+/* ---------------- UI ---------------- */
+
+function bindUI() {
+  els.addRole?.addEventListener("click", () => {
+    const val = els.roleInput.value.trim();
+    if (!val || roles.includes(val)) return;
+
+    roles.push(val);
+    els.roleInput.value = "";
+    renderRoles();
+  });
+
+  els.imageInput?.addEventListener("change", handleImageChange);
+
+  els.form?.addEventListener("submit", (e) => {
+    e.preventDefault();
+    submitEvent("published");
+  });
+
+  els.saveDraft?.addEventListener("click", (e) => {
+    e.preventDefault();
+    submitEvent("draft");
+  });
+
+  els.logoutBtn?.addEventListener("click", () => {
+    logout(ROUTES.organizerLogin);
+  });
+}
+
+/* ---------------- INIT ---------------- */
+
+document.addEventListener("DOMContentLoaded", async () => {
+  await requireOrganizer();
+
+  bindUI();
+  await loadEvent();
 });

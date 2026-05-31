@@ -1,30 +1,25 @@
-export function getQueryParam(name) {
-  return new URLSearchParams(window.location.search).get(name);
+export function normalizeUsers(payload) {
+  if (Array.isArray(payload)) return payload;
+  if (Array.isArray(payload?.users)) return payload.users;
+  if (Array.isArray(payload?.data)) return payload.data;
+  return [];
 }
 
-export function formatDate(dateValue, month = "short") {
+export function normalizeEvents(payload) {
+  if (Array.isArray(payload)) return payload;
+  if (Array.isArray(payload?.events)) return payload.events;
+  if (Array.isArray(payload?.data)) return payload.data;
+  return [];
+}
+
+export function formatDate(dateValue) {
   if (!dateValue) return "—";
   const date = new Date(dateValue);
   if (Number.isNaN(date.getTime())) return dateValue;
 
   return date.toLocaleDateString("en-GB", {
     day: "2-digit",
-    month,
+    month: "short",
     year: "numeric"
   });
-}
-
-export function getLocationText(entity) {
-  if (typeof entity?.location === "string" && entity.location.trim()) {
-    return entity.location;
-  }
-
-  if (entity?.location && typeof entity.location === "object") {
-    return [
-      entity.location.venue,
-      entity.location.city || entity.location.state
-    ].filter(Boolean).join(", ");
-  }
-
-  return entity?.city || entity?.state || "—";
 }

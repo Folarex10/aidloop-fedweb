@@ -1,131 +1,53 @@
-const API_BASE_URL = "https://aidloop-backend.onrender.com/api";
+import { loadAdminProfile } from "../../assets/js/admin/admin-auth.js";
+import {
+  fetchEvents,
+  filterEvents,
+  getEventTitle,
+  getContactEmail,
+  formatLocation,
+  getEventStatus,
+  getStatusLabel
+} from "../../assets/js/admin/admin-events.js";
+
+import { logout } from "../../assets/js/logout.js";
+import { ROUTES } from "../../assets/js/config.js";
+
+/* ---------------- ELEMENTS ---------------- */
 
 const els = {
-  adminName: document.getElementById("adminName"),
-  adminRole: document.getElementById("adminRole"),
-  adminAvatar: document.getElementById("adminAvatar"),
   eventsTable: document.getElementById("eventsTable"),
-  eventsTableWrap: document.getElementById("eventsTableWrap"),
+  tableWrap: document.querySelector(".table-wrapper table"),
   emptyState: document.getElementById("emptyState"),
   searchInput: document.getElementById("searchInput"),
   filterButtons: document.querySelectorAll(".filter-btn"),
-  logoutBtn: document.getElementById("logoutBtn"),
-  logoutModal: document.getElementById("logoutModal"),
-  closeLogoutModal: document.getElementById("closeLogoutModal"),
-  cancelLogout: document.getElementById("cancelLogout"),
-  confirmLogout: document.getElementById("confirmLogout")
+  adminName: document.getElementById("adminName"),
+  adminRole: document.getElementById("adminRole"),
+  adminAvatar: document.getElementById("adminAvatar"),
+  logoutBtn: document.getElementById("logoutBtn")
 };
 
 let eventsCache = [];
 let currentFilter = "all";
 
-async function apiRequest(endpoint, options = {}) {
-  const response = await fetch(`${API_BASE_URL}${endpoint}`, {
-    credentials: "include",
-    headers: {
-      "Content-Type": "application/json",
-      ...(options.headers || {})
-    },
-    ...options
-  });
-
-  const contentType = response.headers.get("content-type") || "";
-  const data = contentType.includes("application/json")
-    ? await response.json()
-    : await response.text();
-
-  if (!response.ok) {
-    throw new Error(
-      (data && data.message) ||
-      (data && data.error) ||
-      "Request failed"
-    );
-  }
-
-  return data;
-}
-
-function normalizeEvents(eventsPayload) {
-  if (Array.isArray(eventsPayload)) return eventsPayload;
-  if (Array.isArray(eventsPayload?.events)) return eventsPayload.events;
-  if (Array.isArray(eventsPayload?.data)) return eventsPayload.data;
-  return [];
-}
-
-function formatLocation(event) {
-  if (typeof event.location === "string" && event.location.trim()) {
-    return event.location;
-  }
-
-  if (event.location && typeof event.location === "object") {
-    return (
-      [event.location.venue, event.location.city || event.location.state]
-        .filter(Boolean)
-        .join(", ") || "—"
-    );
-  }
-
-  return event.city || event.state || "—";
-}
-
-function getStatusValue(event) {
-  const status = String(event.status || "").toLowerCase();
-
-  if (status.includes("cancel")) return "cancelled";
-  if (status.includes("draft")) return "draft";
-  return "published";
-}
-
-function getContactEmail(event) {
-  return (
-    event.organizer?.email ||
-    event.contactEmail ||
-    event.email ||
-    "—"
-  );
-}
-
-function getEventTitle(event) {
-  return event.name || event.title || "Untitled Event";
-}
-
-function getEventId(event) {
-  return event._id || event.id || "";
-}
+/* ---------------- RENDER ---------------- */
 
 function renderEvents() {
-  const query = els.searchInput.value.trim().toLowerCase();
+  const query = els.searchInput.value.trim();
 
-  let filtered = [...eventsCache];
-
-  if (currentFilter !== "all") {
-    filtered = filtered.filter((event) => getStatusValue(event) === currentFilter);
-  }
-
-  if (query) {
-    filtered = filtered.filter((event) => {
-      const searchableText = `
-        ${getEventTitle(event)}
-        ${getContactEmail(event)}
-        ${formatLocation(event)}
-        ${getStatusValue(event)}
-      `.toLowerCase();
-
-      return searchableText.includes(query);
-    });
-  }
+  const filtered = filterEvents(eventsCache, currentFilter, query);
 
   if (!filtered.length) {
-    els.eventsTableWrap.style.display = "none";
+    els.tableWrap.style.display = "none";
     els.emptyState.style.display = "block";
     return;
   }
 
-  els.eventsTableWrap.style.display = "table";
+  els.tableWrap.style.display = "table";
   els.emptyState.style.display = "none";
 
-  els.eventsTable.innerHTML = filtered.map((event) => {
-    const status = getStatusValue(event);
+  els.eventsTable.innerHTML = filtered.map(event => {
+    const id = event._id || event.id;
+    const status = getEventStatus(event);
 
     return `
       <tr>
@@ -134,12 +56,12 @@ function renderEvents() {
         <td>${formatLocation(event)}</td>
         <td>
           <span class="status-badge ${status}">
-            ${status.charAt(0).toUpperCase() + status.slice(1)}
+            ${getStatusLabel(status)}
           </span>
         </td>
         <td>
-          <a class="action-link" href="event-details.html?id=${encodeURIComponent(getEventId(event))}">
-            View Details
+          <a href="../events/event-details.html?id=${encodeURIComponent(id)}">
+            View
           </a>
         </td>
       </tr>
@@ -147,112 +69,66 @@ function renderEvents() {
   }).join("");
 }
 
-function bindFilters() {
-  els.filterButtons.forEach((button) => {
-    button.addEventListener("click", () => {
-      els.filterButtons.forEach((btn) => btn.classList.remove("active"));
-      button.classList.add("active");
-      currentFilter = button.dataset.filter;
-      renderEvents();
-    });
-  });
-}
-
-function openLogoutModal() {
-  els.logoutModal.classList.remove("hidden");
-}
-
-function closeLogoutModal() {
-  els.logoutModal.classList.add("hidden");
-  els.confirmLogout.disabled = false;
-  els.confirmLogout.textContent = "Yes, Log out";
-}
-
-async function handleLogout() {
-  try {
-    els.confirmLogout.disabled = true;
-    els.confirmLogout.textContent = "Logging out...";
-
-    await apiRequest("/auth/logout", {
-      method: "POST"
-    });
-  } catch (error) {
-    console.warn("Logout failed:", error.message);
-  } finally {
-    localStorage.clear();
-    sessionStorage.clear();
-    window.location.href = "../../index.html";
-  }
-}
-
-async function loadAdminProfile() {
-  try {
-    let profile;
-    try {
-      profile = await apiRequest("/users/me");
-    } catch {
-      profile = await apiRequest("/user/me");
-    }
-
-    els.adminName.textContent =
-      profile.fullName ||
-      profile.name ||
-      "Admin User";
-
-    els.adminRole.textContent =
-      profile.role
-        ? profile.role.charAt(0).toUpperCase() + profile.role.slice(1)
-        : "Admin";
-
-    if (profile.profileImage) {
-      els.adminAvatar.src = profile.profileImage;
-    }
-  } catch (error) {
-    console.error("Failed to load admin profile:", error.message);
-    window.location.href = "../profile/admin-profile.html";
-  }
-}
+/* ---------------- LOAD ---------------- */
 
 async function loadEvents() {
   try {
-    const payload = await apiRequest("/events");
-    eventsCache = normalizeEvents(payload);
+    // 🔥 ALWAYS FETCH FRESH DATA
+    eventsCache = await fetchEvents();
+
     renderEvents();
-  } catch (error) {
-    console.error("Failed to load events:", error.message);
+  } catch (err) {
     els.eventsTable.innerHTML = `
       <tr>
-        <td colspan="5">Failed to load events.</td>
+        <td colspan="5">Failed to load events</td>
       </tr>
     `;
   }
 }
 
+/* ---------------- FILTER ---------------- */
+
+function bindFilters() {
+  els.filterButtons.forEach(btn => {
+    btn.addEventListener("click", () => {
+      els.filterButtons.forEach(b => b.classList.remove("active"));
+      btn.classList.add("active");
+
+      currentFilter = btn.dataset.filter;
+      renderEvents();
+    });
+  });
+}
+
+/* ---------------- LIVE REFRESH (OPTIONAL BUT POWERFUL) ---------------- */
+
+function startAutoRefresh() {
+  // refresh every 10 seconds
+  setInterval(loadEvents, 10000);
+}
+
+/* ---------------- INIT ---------------- */
+
 function bindUI() {
   els.searchInput.addEventListener("input", renderEvents);
-
   bindFilters();
 
-  els.logoutBtn.addEventListener("click", openLogoutModal);
-  els.closeLogoutModal.addEventListener("click", closeLogoutModal);
-  els.cancelLogout.addEventListener("click", closeLogoutModal);
-  els.confirmLogout.addEventListener("click", handleLogout);
-
-  els.logoutModal.addEventListener("click", (event) => {
-    if (event.target === els.logoutModal) {
-      closeLogoutModal();
-    }
-  });
-
-  document.addEventListener("keydown", (event) => {
-    if (event.key === "Escape" && !els.logoutModal.classList.contains("hidden")) {
-      closeLogoutModal();
-    }
+  els.logoutBtn?.addEventListener("click", () => {
+    logout(ROUTES.landing);
   });
 }
 
 document.addEventListener("DOMContentLoaded", async () => {
   bindUI();
-  await loadAdminProfile();
+
+  await loadAdminProfile({
+    nameEl: els.adminName,
+    roleEl: els.adminRole,
+    avatarEl: els.adminAvatar
+  });
+
   await loadEvents();
+
+  // 🔥 optional real-time feel
+  startAutoRefresh();
 });

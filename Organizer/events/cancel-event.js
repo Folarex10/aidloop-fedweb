@@ -16,9 +16,19 @@ const els = {
   cancelModal: document.getElementById("cancelModal")
 };
 
+/* ---------------- HELPERS ---------------- */
+
 function getSelectedReasons() {
   return [...document.querySelectorAll("input[type='checkbox']:checked")]
-    .map((cb) => cb.value);
+    .map((cb) => cb.value.trim())
+    .filter(Boolean);
+}
+
+function buildReason() {
+  const selected = getSelectedReasons();
+  const text = els.reasonText.value.trim();
+
+  return [...selected, text].filter(Boolean).join(", ");
 }
 
 function openModal() {
@@ -29,17 +39,26 @@ function hideModal() {
   els.confirmModal.classList.add("hidden");
 }
 
-async function cancelEvent() {
-  const reasons = getSelectedReasons();
-  const text = els.reasonText.value.trim();
+function validateEventId() {
+  if (!eventId || eventId === "undefined" || eventId === "null") {
+    alert("Invalid event ID");
+    window.location.href = ROUTES.eventListing;
+    return false;
+  }
+  return true;
+}
 
-  if (!reasons.length && !text) {
-    alert("Please provide a reason");
-    hideModal();
+/* ---------------- CANCEL EVENT ---------------- */
+
+async function cancelEvent() {
+  if (!validateEventId()) return;
+
+  const reason = buildReason();
+
+  if (!reason) {
+    alert("Please provide a reason for cancellation");
     return;
   }
-
-  const reason = [...reasons, text].filter(Boolean).join(", ");
 
   try {
     els.confirmCancel.disabled = true;
@@ -47,20 +66,29 @@ async function cancelEvent() {
 
     await apiRequest(`/events/${eventId}/cancel`, {
       method: "PATCH",
-      body: JSON.stringify({ reason })
+      body: JSON.stringify({
+        cancelReason: reason   // ✅ FIXED KEY
+      })
     });
 
     alert("Event cancelled successfully");
+
     window.location.href = ROUTES.eventListing;
+
   } catch (err) {
     alert(err.message || "Failed to cancel event");
-  } finally {
+
     els.confirmCancel.disabled = false;
     els.confirmCancel.textContent = "Yes, Cancel event";
   }
 }
 
-els.cancelBtn.addEventListener("click", openModal);
+/* ---------------- EVENTS ---------------- */
+
+els.cancelBtn.addEventListener("click", () => {
+  if (!validateEventId()) return;
+  openModal();
+});
 
 els.goBackBtn.addEventListener("click", () => {
   window.history.back();
@@ -76,12 +104,10 @@ els.logoutBtn.addEventListener("click", () => {
   logout(ROUTES.organizerLogin);
 });
 
+/* ---------------- INIT ---------------- */
+
 document.addEventListener("DOMContentLoaded", async () => {
   await requireRole("organizer", ROUTES.organizerLogin);
 
-  if (!eventId) {
-    alert("Invalid event");
-    window.location.href = ROUTES.eventListing;
-    return;
-  }
+  if (!validateEventId()) return;
 });

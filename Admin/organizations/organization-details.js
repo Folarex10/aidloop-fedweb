@@ -1,4 +1,5 @@
-const API_BASE_URL = "https://aidloop-backend.onrender.com/api";
+import { fetchOrganizers, getStoredOverrides, getVerificationStatus } from "../../assets/js/admin/admin-verification.js";
+import { getDisplayName, getLocation } from "../../assets/js/admin/admin-organizations.js";
 
 const els = {
   closeBtn: document.getElementById("closeBtn"),
@@ -14,83 +15,10 @@ const els = {
 
 const organizerId = new URLSearchParams(window.location.search).get("id");
 
-async function apiRequest(endpoint, options = {}) {
-  const response = await fetch(`${API_BASE_URL}${endpoint}`, {
-    credentials: "include",
-    headers: {
-      "Content-Type": "application/json",
-      ...(options.headers || {})
-    },
-    ...options
-  });
-
-  const contentType = response.headers.get("content-type") || "";
-  const data = contentType.includes("application/json")
-    ? await response.json()
-    : await response.text();
-
-  if (!response.ok) {
-    throw new Error(
-      (data && data.message) ||
-      (data && data.error) ||
-      "Request failed"
-    );
-  }
-
-  return data;
-}
-
-function normalizeUsers(payload) {
-  if (Array.isArray(payload)) return payload;
-  if (Array.isArray(payload?.users)) return payload.users;
-  if (Array.isArray(payload?.data)) return payload.data;
-  return [];
-}
-
-function getDisplayName(user) {
-  return user.fullName || user.name || user.organizationName || "Organization";
-}
-
-function getLocation(user) {
-  if (typeof user.location === "string" && user.location.trim()) {
-    return user.location;
-  }
-
-  if (user.location && typeof user.location === "object") {
-    return (
-      [user.location.venue, user.location.city || user.location.state]
-        .filter(Boolean)
-        .join(", ") || "—"
-    );
-  }
-
-  return user.city || user.state || "—";
-}
-
-function getOrganizerStatus(user) {
-  const status = String(user.status || "").toLowerCase();
-  const approvalStatus = String(user.approvalStatus || "").toLowerCase();
-  const isVerified = Boolean(user.isVerified);
-
-  if (status === "rejected" || approvalStatus === "rejected") return "rejected";
-
-  if (
-    status === "verified" ||
-    status === "approved" ||
-    approvalStatus === "verified" ||
-    approvalStatus === "approved" ||
-    isVerified
-  ) {
-    return "verified";
-  }
-
-  return "awaiting";
-}
-
 function setStatusBadge(status) {
   els.statusBadge.textContent =
-    status === "verified"
-      ? "Verified"
+    status === "approved"
+      ? "Approved"
       : status === "rejected"
       ? "Rejected"
       : "Awaiting";
@@ -118,8 +46,24 @@ function renderSocialLinks(user) {
   `;
 }
 
+function mergeOrganizerWithOverride(organizer) {
+  const overrides = getStoredOverrides();
+  const override = overrides[String(organizerId)];
+
+  if (!override?.status) {
+    return organizer;
+  }
+
+  return {
+    ...organizer,
+    status: override.status,
+    approvalStatus: override.status,
+    isVerified: override.status === "approved"
+  };
+}
+
 function populateOrganizer(user) {
-  const status = getOrganizerStatus(user);
+  const status = getVerificationStatus(user);
 
   els.orgTitle.textContent = getDisplayName(user);
   els.orgName.textContent = getDisplayName(user);
@@ -144,17 +88,9 @@ async function loadOrganizerDetails() {
   }
 
   try {
-    let payload;
+    const organizers = await fetchOrganizers();
 
-    try {
-      payload = await apiRequest("/user");
-    } catch {
-      payload = await apiRequest("/users");
-    }
-
-    const users = normalizeUsers(payload);
-
-    const organizer = users.find(
+    const organizer = organizers.find(
       (user) => String(user._id || user.id) === String(organizerId)
     );
 
@@ -162,7 +98,8 @@ async function loadOrganizerDetails() {
       throw new Error("Organizer not found");
     }
 
-    populateOrganizer(organizer);
+    const mergedOrganizer = mergeOrganizerWithOverride(organizer);
+    populateOrganizer(mergedOrganizer);
   } catch (error) {
     els.orgTitle.textContent = "Unable to load organizer";
     els.description.innerHTML = `<p>${error.message || "Failed to fetch organizer details."}</p>`;

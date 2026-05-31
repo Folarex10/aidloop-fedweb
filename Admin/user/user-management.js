@@ -1,13 +1,20 @@
-const API_BASE_URL = "https://aidloop-backend.onrender.com/api";
+import { apiRequest } from "../../assets/js/api.js";
+import { requireRole } from "../../assets/js/auth.js";
+import { logout } from "../../assets/js/logout.js";
+import { ROUTES } from "../../assets/js/config.js";
 
+/* ---------------- ELEMENTS ---------------- */
 const els = {
   adminName: document.getElementById("adminName"),
   adminRole: document.getElementById("adminRole"),
   adminAvatar: document.getElementById("adminAvatar"),
+
   userTable: document.getElementById("userTable"),
   userTableWrap: document.getElementById("userTableWrap"),
   emptyState: document.getElementById("emptyState"),
+
   searchInput: document.getElementById("searchInput"),
+
   logoutBtn: document.getElementById("logoutBtn"),
   logoutModal: document.getElementById("logoutModal"),
   closeLogoutModal: document.getElementById("closeLogoutModal"),
@@ -17,31 +24,7 @@ const els = {
 
 let usersCache = [];
 
-async function apiRequest(endpoint, options = {}) {
-  const response = await fetch(`${API_BASE_URL}${endpoint}`, {
-    credentials: "include",
-    headers: {
-      "Content-Type": "application/json",
-      ...(options.headers || {})
-    },
-    ...options
-  });
-
-  const contentType = response.headers.get("content-type") || "";
-  const data = contentType.includes("application/json")
-    ? await response.json()
-    : await response.text();
-
-  if (!response.ok) {
-    throw new Error(
-      (data && data.message) ||
-      (data && data.error) ||
-      "Request failed"
-    );
-  }
-
-  return data;
-}
+/* ---------------- HELPERS ---------------- */
 
 function normalizeUsers(payload) {
   if (Array.isArray(payload)) return payload;
@@ -74,6 +57,8 @@ function getRole(user) {
   return String(user.role || "user").toLowerCase();
 }
 
+/* ---------------- RENDER ---------------- */
+
 function renderUsers() {
   const query = els.searchInput.value.trim().toLowerCase();
 
@@ -97,35 +82,39 @@ function renderUsers() {
   els.userTableWrap.style.display = "table";
   els.emptyState.style.display = "none";
 
-  els.userTable.innerHTML = filtered.map((user) => {
-    const role = getRole(user);
-    const id = user._id || user.id || "";
-    const isActive = user.isActive !== false;
+  els.userTable.innerHTML = filtered
+    .map((user) => {
+      const role = getRole(user);
+      const id = user._id || user.id || "";
+      const isActive = user.isActive !== false;
 
-    return `
-      <tr>
-        <td>${getDisplayName(user)}</td>
-        <td>${user.email || "—"}</td>
-        <td>${getLocation(user)}</td>
-        <td><span class="role-badge ${role}">${role}</span></td>
-        <td>
-          <div class="actions-cell">
-            <a class="action-link" href="user-details.html?id=${encodeURIComponent(id)}">View</a>
-            <button
-              class="action-btn ${isActive ? "" : "deactivated"}"
-              data-id="${id}"
-              ${isActive ? "" : "disabled"}
-            >
-              ${isActive ? "Deactivate" : "Deactivated"}
-            </button>
-          </div>
-        </td>
-      </tr>
-    `;
-  }).join("");
+      return `
+        <tr>
+          <td>${getDisplayName(user)}</td>
+          <td>${user.email || "—"}</td>
+          <td>${getLocation(user)}</td>
+          <td><span class="role-badge ${role}">${role}</span></td>
+          <td>
+            <div class="actions-cell">
+              <a class="action-link" href="user-details.html?id=${encodeURIComponent(id)}">View</a>
+              <button
+                class="action-btn ${isActive ? "" : "deactivated"}"
+                data-id="${id}"
+                ${isActive ? "" : "disabled"}
+              >
+                ${isActive ? "Deactivate" : "Deactivated"}
+              </button>
+            </div>
+          </td>
+        </tr>
+      `;
+    })
+    .join("");
 
   bindDeactivateButtons();
 }
+
+/* ---------------- ACTIONS ---------------- */
 
 function bindDeactivateButtons() {
   document.querySelectorAll(".action-btn[data-id]").forEach((button) => {
@@ -141,6 +130,7 @@ function bindDeactivateButtons() {
           method: "PATCH"
         });
 
+        // update cache instantly
         usersCache = usersCache.map((user) =>
           String(user._id || user.id) === String(id)
             ? { ...user, isActive: false }
@@ -149,7 +139,7 @@ function bindDeactivateButtons() {
 
         renderUsers();
       } catch (error) {
-        console.error("Failed to deactivate user:", error.message);
+        console.error("Deactivate failed:", error.message);
         button.disabled = false;
         button.textContent = "Deactivate";
       }
@@ -157,36 +147,12 @@ function bindDeactivateButtons() {
   });
 }
 
-function openLogoutModal() {
-  els.logoutModal.classList.remove("hidden");
-}
-
-function closeLogoutModal() {
-  els.logoutModal.classList.add("hidden");
-  els.confirmLogout.disabled = false;
-  els.confirmLogout.textContent = "Yes, Log out";
-}
-
-async function handleLogout() {
-  try {
-    els.confirmLogout.disabled = true;
-    els.confirmLogout.textContent = "Logging out...";
-
-    await apiRequest("/auth/logout", {
-      method: "POST"
-    });
-  } catch (error) {
-    console.warn("Logout failed:", error.message);
-  } finally {
-    localStorage.clear();
-    sessionStorage.clear();
-    window.location.href = "../../index.html";
-  }
-}
+/* ---------------- ADMIN PROFILE ---------------- */
 
 async function loadAdminProfile() {
   try {
     let profile;
+
     try {
       profile = await apiRequest("/users/me");
     } catch {
@@ -194,9 +160,7 @@ async function loadAdminProfile() {
     }
 
     els.adminName.textContent =
-      profile.fullName ||
-      profile.name ||
-      "Admin User";
+      profile.fullName || profile.name || "Admin User";
 
     els.adminRole.textContent =
       profile.role
@@ -207,18 +171,30 @@ async function loadAdminProfile() {
       els.adminAvatar.src = profile.profileImage;
     }
   } catch (error) {
-    console.error("Failed to load admin profile:", error.message);
-    window.location.href = "../profile/admin-profile.html";
+    console.error("Profile load failed:", error.message);
+    window.location.href = ROUTES.adminProfile;
   }
 }
 
+/* ---------------- DATA ---------------- */
+
 async function loadUsers() {
   try {
-    const payload = await apiRequest("/user").catch(() => apiRequest("/users"));
+    const payload = await apiRequest("/user").catch(() =>
+      apiRequest("/users")
+    );
+
     usersCache = normalizeUsers(payload);
+
+    // newest first
+    usersCache.sort(
+      (a, b) =>
+        new Date(b.createdAt || 0) - new Date(a.createdAt || 0)
+    );
+
     renderUsers();
   } catch (error) {
-    console.error("Failed to load users:", error.message);
+    console.error("Load users failed:", error.message);
     els.userTable.innerHTML = `
       <tr>
         <td colspan="5">Failed to load users.</td>
@@ -227,28 +203,40 @@ async function loadUsers() {
   }
 }
 
-function bindUI() {
-  els.searchInput.addEventListener("input", renderUsers);
+/* ---------------- LOGOUT ---------------- */
 
+function openLogoutModal() {
+  els.logoutModal.classList.remove("hidden");
+}
+
+function closeLogoutModal() {
+  els.logoutModal.classList.add("hidden");
+}
+
+function bindLogout() {
   els.logoutBtn.addEventListener("click", openLogoutModal);
   els.closeLogoutModal.addEventListener("click", closeLogoutModal);
   els.cancelLogout.addEventListener("click", closeLogoutModal);
-  els.confirmLogout.addEventListener("click", handleLogout);
 
-  els.logoutModal.addEventListener("click", (event) => {
-    if (event.target === els.logoutModal) {
-      closeLogoutModal();
-    }
+  els.confirmLogout.addEventListener("click", () => {
+    logout(ROUTES.adminLogin);
   });
 
-  document.addEventListener("keydown", (event) => {
-    if (event.key === "Escape" && !els.logoutModal.classList.contains("hidden")) {
-      closeLogoutModal();
-    }
+  els.logoutModal.addEventListener("click", (e) => {
+    if (e.target === els.logoutModal) closeLogoutModal();
   });
 }
 
+/* ---------------- INIT ---------------- */
+
+function bindUI() {
+  els.searchInput.addEventListener("input", renderUsers);
+  bindLogout();
+}
+
 document.addEventListener("DOMContentLoaded", async () => {
+  await requireRole("admin", ROUTES.adminLogin);
+
   bindUI();
   await loadAdminProfile();
   await loadUsers();

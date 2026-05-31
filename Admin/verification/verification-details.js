@@ -1,4 +1,10 @@
-const API_BASE_URL = "https://aidloop-backend.onrender.com/api";
+import { apiRequest } from "../../Assets/Js/api.js";
+import {
+  fetchOrganizers,
+  getVerificationStatus,
+  getStoredOverrides,
+  saveOverride
+} from "../../Assets/Js/admin/admin-verification.js";
 
 const els = {
   orgTitle: document.getElementById("orgTitle"),
@@ -15,40 +21,6 @@ const els = {
 };
 
 const organizerId = new URLSearchParams(window.location.search).get("id");
-const VERIFICATION_STATUS_STORAGE_KEY = "aidloop_verification_status_overrides";
-
-async function apiRequest(endpoint, options = {}) {
-  const response = await fetch(`${API_BASE_URL}${endpoint}`, {
-    credentials: "include",
-    headers: {
-      "Content-Type": "application/json",
-      ...(options.headers || {})
-    },
-    ...options
-  });
-
-  const contentType = response.headers.get("content-type") || "";
-  const data = contentType.includes("application/json")
-    ? await response.json()
-    : await response.text();
-
-  if (!response.ok) {
-    throw new Error(
-      (data && data.message) ||
-      (data && data.error) ||
-      "Request failed"
-    );
-  }
-
-  return data;
-}
-
-function normalizeUsers(payload) {
-  if (Array.isArray(payload)) return payload;
-  if (Array.isArray(payload?.users)) return payload.users;
-  if (Array.isArray(payload?.data)) return payload.data;
-  return [];
-}
 
 function getDisplayName(user) {
   return user.fullName || user.name || user.organizationName || "Organization";
@@ -68,26 +40,6 @@ function getLocation(user) {
   }
 
   return user.city || user.state || "—";
-}
-
-function getVerificationStatus(user) {
-  const status = String(user.status || "").toLowerCase();
-  const approvalStatus = String(user.approvalStatus || "").toLowerCase();
-  const isVerified = Boolean(user.isVerified);
-
-  if (status === "rejected" || approvalStatus === "rejected") return "rejected";
-
-  if (
-    status === "approved" ||
-    approvalStatus === "approved" ||
-    status === "verified" ||
-    approvalStatus === "verified" ||
-    isVerified
-  ) {
-    return "approved";
-  }
-
-  return "awaiting";
 }
 
 function setStatusBadge(status) {
@@ -129,27 +81,20 @@ function setFeedback(message, type = "") {
   }
 }
 
-function getStoredVerificationOverrides() {
-  try {
-    return JSON.parse(localStorage.getItem(VERIFICATION_STATUS_STORAGE_KEY)) || {};
-  } catch {
-    return {};
+function mergeOrganizerWithOverride(organizer) {
+  const overrides = getStoredOverrides();
+  const override = overrides[String(organizerId)];
+
+  if (!override?.status) {
+    return organizer;
   }
-}
 
-function saveStoredVerificationOverrides(overrides) {
-  localStorage.setItem(VERIFICATION_STATUS_STORAGE_KEY, JSON.stringify(overrides));
-}
-
-function persistVerificationStatus(status) {
-  if (!organizerId) return;
-
-  const overrides = getStoredVerificationOverrides();
-  overrides[String(organizerId)] = {
-    status,
-    updatedAt: Date.now()
+  return {
+    ...organizer,
+    status: override.status,
+    approvalStatus: override.status,
+    isVerified: override.status === "approved"
   };
-  saveStoredVerificationOverrides(overrides);
 }
 
 function populateOrganizer(user) {
@@ -181,17 +126,9 @@ async function loadOrganizerDetails() {
   }
 
   try {
-    let payload;
+    const organizers = await fetchOrganizers();
 
-    try {
-      payload = await apiRequest("/user");
-    } catch {
-      payload = await apiRequest("/users");
-    }
-
-    const users = normalizeUsers(payload);
-
-    const organizer = users.find(
+    const organizer = organizers.find(
       (user) => String(user._id || user.id) === String(organizerId)
     );
 
@@ -199,18 +136,7 @@ async function loadOrganizerDetails() {
       throw new Error("Organizer not found");
     }
 
-    const overrides = getStoredVerificationOverrides();
-    const override = overrides[String(organizerId)];
-
-    const mergedOrganizer = override
-      ? {
-          ...organizer,
-          status: override.status,
-          approvalStatus: override.status,
-          isVerified: override.status === "approved"
-        }
-      : organizer;
-
+    const mergedOrganizer = mergeOrganizerWithOverride(organizer);
     populateOrganizer(mergedOrganizer);
   } catch (error) {
     els.orgTitle.textContent = "Unable to load organizer";
@@ -232,7 +158,7 @@ async function approveOrganizer() {
       method: "PATCH"
     });
 
-    persistVerificationStatus("approved");
+    saveOverride(organizerId, "approved");
     setStatusBadge("approved");
     setFeedback("Organizer approved successfully.", "success");
 
@@ -257,7 +183,7 @@ async function rejectOrganizer() {
       method: "PATCH"
     });
 
-    persistVerificationStatus("rejected");
+    saveOverride(organizerId, "rejected");
     setStatusBadge("rejected");
     setFeedback("Organizer rejected successfully.", "success");
 

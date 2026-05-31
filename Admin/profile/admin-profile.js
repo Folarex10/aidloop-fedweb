@@ -1,4 +1,7 @@
-const API_BASE_URL = "https://aidloop-backend.onrender.com/api";
+import { apiRequest } from "../../assets/js/api.js";
+import { requireRole } from "../../assets/js/auth.js";
+import { logout } from "../../assets/js/logout.js";
+import { ROUTES } from "../../assets/js/config.js";
 
 const els = {
   adminAvatar: document.getElementById("adminAvatar"),
@@ -15,54 +18,24 @@ const els = {
   confirmPassword: document.getElementById("confirmPassword"),
   passwordForm: document.getElementById("passwordForm"),
   passwordFeedback: document.getElementById("passwordFeedback"),
-  logoutBtn: document.getElementById("logoutBtn"),
-  logoutModal: document.getElementById("logoutModal"),
-  closeLogoutModal: document.getElementById("closeLogoutModal"),
-  cancelLogout: document.getElementById("cancelLogout"),
-  confirmLogout: document.getElementById("confirmLogout")
+  logoutBtn: document.getElementById("logoutBtn")
 };
 
 let profileEditMode = false;
 let currentAdmin = null;
 
-async function apiRequest(endpoint, options = {}) {
-  const response = await fetch(`${API_BASE_URL}${endpoint}`, {
-    credentials: "include",
-    headers: {
-      "Content-Type": "application/json",
-      ...(options.headers || {})
-    },
-    ...options
-  });
+/* ---------------- HELPERS ---------------- */
 
-  const contentType = response.headers.get("content-type") || "";
-  const data = contentType.includes("application/json")
-    ? await response.json()
-    : await response.text();
-
-  if (!response.ok) {
-    throw new Error(
-      (data && data.message) ||
-      (data && data.error) ||
-      "Request failed"
-    );
-  }
-
-  return data;
-}
-
-function setFeedback(element, message, type = "") {
-  element.textContent = message;
-  element.className = "feedback";
-  if (type) {
-    element.classList.add(type);
-  }
+function setFeedback(el, message, type = "") {
+  el.textContent = message;
+  el.className = "feedback";
+  if (type) el.classList.add(type);
 }
 
 function fillProfile(profile) {
   currentAdmin = profile;
 
-  const fullName = profile.fullName || profile.name || "Admin User";
+  const fullName = profile.fullName || profile.name || "Admin";
   const role = profile.role
     ? profile.role.charAt(0).toUpperCase() + profile.role.slice(1)
     : "Admin";
@@ -80,17 +53,19 @@ function fillProfile(profile) {
   }
 }
 
-function setProfileInputsReadonly(readonly) {
-  els.phoneNumber.readOnly = readonly;
+function toggleEditMode(force = null) {
+  profileEditMode = force !== null ? force : !profileEditMode;
+
+  els.phoneNumber.readOnly = !profileEditMode;
+
+  els.editProfileBtn.textContent = profileEditMode
+    ? "Save Profile"
+    : "Edit Profile";
 }
 
-function toggleProfileEditMode(forceValue = null) {
-  profileEditMode = forceValue !== null ? forceValue : !profileEditMode;
-  setProfileInputsReadonly(!profileEditMode);
-  els.editProfileBtn.textContent = profileEditMode ? "Save Profile" : "Edit Profile";
-}
+/* ---------------- PROFILE ---------------- */
 
-async function loadAdminProfile() {
+async function loadProfile() {
   try {
     let profile;
     try {
@@ -100,9 +75,10 @@ async function loadAdminProfile() {
     }
 
     fillProfile(profile);
-    toggleProfileEditMode(false);
-  } catch (error) {
-    setFeedback(els.profileFeedback, error.message || "Failed to load profile.", "error");
+    toggleEditMode(false);
+
+  } catch (err) {
+    setFeedback(els.profileFeedback, err.message, "error");
   }
 }
 
@@ -117,16 +93,13 @@ async function saveProfile() {
       })
     });
 
-    fillProfile({
-      ...currentAdmin,
-      ...updated,
-      phoneNumber: updated.phoneNumber || els.phoneNumber.value.trim()
-    });
+    fillProfile({ ...currentAdmin, ...updated });
 
-    toggleProfileEditMode(false);
-    setFeedback(els.profileFeedback, "Profile updated successfully.", "success");
-  } catch (error) {
-    setFeedback(els.profileFeedback, error.message || "Failed to update profile.", "error");
+    toggleEditMode(false);
+    setFeedback(els.profileFeedback, "Profile updated successfully", "success");
+
+  } catch (err) {
+    setFeedback(els.profileFeedback, err.message, "error");
   } finally {
     els.editProfileBtn.disabled = false;
   }
@@ -134,87 +107,61 @@ async function saveProfile() {
 
 function handleEditProfile() {
   setFeedback(els.profileFeedback, "");
+
   if (!profileEditMode) {
-    toggleProfileEditMode(true);
-    return;
+    toggleEditMode(true);
+  } else {
+    saveProfile();
   }
-  saveProfile();
 }
 
-function handlePasswordSubmit(event) {
-  event.preventDefault();
+/* ---------------- PASSWORD ---------------- */
 
-  const currentPassword = els.currentPassword.value.trim();
-  const newPassword = els.newPassword.value.trim();
-  const confirmPassword = els.confirmPassword.value.trim();
+async function updatePassword(e) {
+  e.preventDefault();
 
-  if (!currentPassword || !newPassword || !confirmPassword) {
-    setFeedback(els.passwordFeedback, "All password fields are required.", "error");
-    return;
-  }
+  const current = els.currentPassword.value.trim();
+  const next = els.newPassword.value.trim();
+  const confirm = els.confirmPassword.value.trim();
 
-  if (newPassword !== confirmPassword) {
-    setFeedback(els.passwordFeedback, "New passwords do not match.", "error");
+  if (!current || !next || !confirm) {
+    setFeedback(els.passwordFeedback, "All fields required", "error");
     return;
   }
 
-  setFeedback(
-    els.passwordFeedback,
-    "No admin change-password endpoint has been provided yet.",
-    "error"
-  );
-}
+  if (next !== confirm) {
+    setFeedback(els.passwordFeedback, "Passwords do not match", "error");
+    return;
+  }
 
-function openLogoutModal() {
-  els.logoutModal.classList.remove("hidden");
-}
-
-function closeLogoutModal() {
-  els.logoutModal.classList.add("hidden");
-  els.confirmLogout.disabled = false;
-  els.confirmLogout.textContent = "Yes, Log out";
-}
-
-async function handleLogout() {
   try {
-    els.confirmLogout.disabled = true;
-    els.confirmLogout.textContent = "Logging out...";
-
-    await apiRequest("/auth/logout", {
-      method: "POST"
+    await apiRequest("/auth/change-password", {
+      method: "PATCH",
+      body: JSON.stringify({
+        currentPassword: current,
+        newPassword: next
+      })
     });
-  } catch (error) {
-    console.warn("Logout failed:", error.message);
-  } finally {
-    localStorage.clear();
-    sessionStorage.clear();
-    window.location.href = "../../index.html";
+
+    els.passwordForm.reset();
+    setFeedback(els.passwordFeedback, "Password updated successfully", "success");
+
+  } catch (err) {
+    setFeedback(els.passwordFeedback, err.message, "error");
   }
 }
 
-function bindUI() {
-  els.editProfileBtn.addEventListener("click", handleEditProfile);
-  els.passwordForm.addEventListener("submit", handlePasswordSubmit);
-
-  els.logoutBtn.addEventListener("click", openLogoutModal);
-  els.closeLogoutModal.addEventListener("click", closeLogoutModal);
-  els.cancelLogout.addEventListener("click", closeLogoutModal);
-  els.confirmLogout.addEventListener("click", handleLogout);
-
-  els.logoutModal.addEventListener("click", (event) => {
-    if (event.target === els.logoutModal) {
-      closeLogoutModal();
-    }
-  });
-
-  document.addEventListener("keydown", (event) => {
-    if (event.key === "Escape" && !els.logoutModal.classList.contains("hidden")) {
-      closeLogoutModal();
-    }
-  });
-}
+/* ---------------- INIT ---------------- */
 
 document.addEventListener("DOMContentLoaded", async () => {
-  bindUI();
-  await loadAdminProfile();
+  await requireRole("admin", ROUTES.adminLogin);
+
+  els.editProfileBtn.addEventListener("click", handleEditProfile);
+  els.passwordForm.addEventListener("submit", updatePassword);
+
+  els.logoutBtn.addEventListener("click", () => {
+    logout(ROUTES.adminLogin);
+  });
+
+  await loadProfile();
 });

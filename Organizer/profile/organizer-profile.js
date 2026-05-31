@@ -1,5 +1,5 @@
 import { apiRequest, normalizeArray } from "../../assets/js/api.js";
-import { requireRole } from ".../../assets/js/auth.js";
+import { requireRole } from "../../assets/js/auth.js";
 import { logout } from "../../assets/js/logout.js";
 import { ROUTES } from "../../assets/js/config.js";
 
@@ -20,38 +20,45 @@ const els = {
   totalVolunteers: document.getElementById("totalVolunteers"),
   certificatesIssued: document.getElementById("certificatesIssued"),
 
-  eventsMonthText: document.getElementById("eventsMonthText"),
-  volunteersMonthText: document.getElementById("volunteersMonthText"),
-  certificatesMonthText: document.getElementById("certificatesMonthText"),
-
   editProfileBtn: document.getElementById("editProfileBtn"),
   logoutBtn: document.getElementById("logoutBtn"),
-  profileMessage: document.getElementById("profileMessage")
+  feedback: document.getElementById("profileMessage")
 };
 
-let organizer = null;
-let isEditing = false;
+let currentOrganizer = null;
+let profileEditMode = false;
+
+/* ------------------ HELPERS ------------------ */
+
+function setFeedback(message, type = "") {
+  if (!els.feedback) return;
+
+  els.feedback.textContent = message;
+  els.feedback.className = "profile-message";
+  if (type) els.feedback.classList.add(type);
+}
+
+function getDisplayName(user) {
+  return user.fullName || user.name || user.organizationName || "Organization";
+}
 
 function getInitials(name) {
   return String(name || "AL")
     .split(" ")
     .slice(0, 2)
-    .map((part) => part.charAt(0))
+    .map((p) => p.charAt(0))
     .join("")
     .toUpperCase();
 }
 
 function getVerificationLabel(user) {
   const status = String(user.status || "").toLowerCase();
-  const approvalStatus = String(user.approvalStatus || "").toLowerCase();
-  const isVerified = Boolean(user.isVerified);
+  const approval = String(user.approvalStatus || "").toLowerCase();
 
   if (
-    status === "verified" ||
-    status === "approved" ||
-    approvalStatus === "verified" ||
-    approvalStatus === "approved" ||
-    isVerified
+    ["verified", "approved"].includes(status) ||
+    ["verified", "approved"].includes(approval) ||
+    user.isVerified
   ) {
     return "Verified Org";
   }
@@ -68,54 +75,105 @@ function getLocationText(user) {
     return [
       user.location.venue,
       user.location.city || user.location.state
-    ].filter(Boolean).join(", ");
+    ]
+      .filter(Boolean)
+      .join(", ");
   }
 
   return user.city || user.state || "—";
 }
 
-function populateProfile(user) {
-  const name = user.fullName || user.name || user.organizationName || "Organization";
+/* ------------------ UI CONTROL ------------------ */
 
-  els.orgName.textContent = name;
-  els.orgType.textContent = user.organizationType || "Non-profit";
-  els.orgCategory.textContent = user.category || "Volunteer Management";
-  els.verificationText.textContent = getVerificationLabel(user);
-  els.profileAvatarBox.textContent = getInitials(name);
-
-  els.email.value = user.email || "";
-  els.phoneNumber.value = user.phoneNumber || user.phone || "";
-  els.website.value =
-    user.website ||
-    user.socialLink ||
-    user.socialLinks?.[0] ||
-    "—";
-  els.location.value = getLocationText(user) || "—";
-  els.description.value =
-    user.description ||
-    user.bio ||
-    "No organization description available.";
+function setInputsReadonly(readonly) {
+  if (els.phoneNumber) els.phoneNumber.readOnly = readonly;
+  if (els.website) els.website.readOnly = readonly;
+  if (els.location) els.location.readOnly = readonly;
+  if (els.description) els.description.readOnly = readonly;
 }
 
-function setEditable(editable) {
-  els.phoneNumber.readOnly = !editable;
-  els.website.readOnly = !editable;
-  els.location.readOnly = !editable;
-  els.description.readOnly = !editable;
+function toggleEditMode(force = null) {
+  profileEditMode = force !== null ? force : !profileEditMode;
+
+  setInputsReadonly(!profileEditMode);
+
+  if (els.editProfileBtn) {
+    els.editProfileBtn.textContent = profileEditMode
+      ? "Save Profile"
+      : "Edit Profile";
+  }
+}
+
+/* ------------------ VALIDATION ------------------ */
+
+function validateProfile() {
+  if (!els.phoneNumber?.value.trim()) {
+    return "Phone number is required.";
+  }
+  return null;
+}
+
+/* ------------------ POPULATE ------------------ */
+
+function fillProfile(user) {
+  currentOrganizer = user;
+
+  const name = getDisplayName(user);
+
+  if (els.orgName) els.orgName.textContent = name;
+  if (els.orgType) els.orgType.textContent = user.organizationType || "Non-profit";
+  if (els.orgCategory) els.orgCategory.textContent = user.category || "Volunteer Management";
+  if (els.verificationText) els.verificationText.textContent = getVerificationLabel(user);
+  if (els.profileAvatarBox) els.profileAvatarBox.textContent = getInitials(name);
+
+  if (els.email) els.email.value = user.email || "";
+  if (els.phoneNumber) els.phoneNumber.value = user.phoneNumber || user.phone || "";
+  if (els.website) {
+    els.website.value =
+      user.website || user.socialLink || user.socialLinks?.[0] || "";
+  }
+  if (els.location) els.location.value = getLocationText(user);
+  if (els.description) {
+    els.description.value = user.description || user.bio || "";
+  }
+}
+
+/* ------------------ DATA ------------------ */
+
+async function loadProfile() {
+  try {
+    let profile;
+
+    try {
+      profile = await apiRequest("/users/me");
+    } catch {
+      profile = await apiRequest("/user/me");
+    }
+
+    fillProfile(profile);
+    toggleEditMode(false);
+
+  } catch (error) {
+    setFeedback(error.message || "Failed to load profile.", "error");
+  }
 }
 
 async function loadStats() {
-  try {
-    const eventsPayload = await apiRequest("/events");
-    const events = normalizeArray(eventsPayload, ["events"]);
+  if (!currentOrganizer) return;
 
-    const organizerId = String(organizer._id || organizer.id || "");
+  try {
+    const payload = await apiRequest("/events");
+    const events = normalizeArray(payload, ["events"]);
+
+    const organizerId = String(currentOrganizer._id || currentOrganizer.id || "");
 
     const ownEvents = events.filter((event) => {
-      if (typeof event.organizer === "object" && event.organizer) {
-        return String(event.organizer._id || event.organizer.id || "") === organizerId;
+      if (event.organizer && typeof event.organizer === "object") {
+        return (
+          String(event.organizer._id || event.organizer.id) === organizerId
+        );
       }
-      return String(event.organizerId || "") === organizerId;
+      return String(event.organizerId) === organizerId;
     });
 
     const totalEvents = ownEvents.length;
@@ -125,72 +183,104 @@ async function loadStats() {
         event.filledSlots ??
         event.registrationsCount ??
         event.registeredCount ??
-        event.attendeesCount ??
         0
       );
     }, 0);
 
-    els.totalEvents.textContent = totalEvents;
-    els.totalVolunteers.textContent = totalVolunteers;
-    els.certificatesIssued.textContent = "0";
+    if (els.totalEvents) els.totalEvents.textContent = totalEvents;
+    if (els.totalVolunteers) els.totalVolunteers.textContent = totalVolunteers;
+    if (els.certificatesIssued) els.certificatesIssued.textContent = "0";
 
-    els.eventsMonthText.textContent = "This month";
-    els.volunteersMonthText.textContent = "This month";
-    els.certificatesMonthText.textContent = "This month";
   } catch {
-    els.totalEvents.textContent = "0";
-    els.totalVolunteers.textContent = "0";
-    els.certificatesIssued.textContent = "0";
+    if (els.totalEvents) els.totalEvents.textContent = "0";
+    if (els.totalVolunteers) els.totalVolunteers.textContent = "0";
+    if (els.certificatesIssued) els.certificatesIssued.textContent = "0";
   }
 }
 
 async function saveProfile() {
-  const payload = {
-    phoneNumber: els.phoneNumber.value.trim(),
-    website: els.website.value.trim(),
-    location: els.location.value.trim(),
-    description: els.description.value.trim()
-  };
-
-  await apiRequest("/user/me", {
-    method: "PUT",
-    body: JSON.stringify(payload)
-  });
-}
-
-els.editProfileBtn.addEventListener("click", async () => {
-  els.profileMessage.textContent = "";
-  els.profileMessage.className = "profile-message";
-
-  if (!isEditing) {
-    isEditing = true;
-    setEditable(true);
-    els.editProfileBtn.textContent = "Save Profile";
+  const error = validateProfile();
+  if (error) {
+    setFeedback(error, "error");
     return;
   }
 
   try {
-    await saveProfile();
-    isEditing = false;
-    setEditable(false);
-    els.editProfileBtn.textContent = "Edit Profile";
-    els.profileMessage.textContent = "Profile updated successfully.";
-    els.profileMessage.classList.add("success");
-  } catch (error) {
-    els.profileMessage.textContent = error.message || "Failed to update profile.";
-    els.profileMessage.classList.add("error");
-  }
-});
+    if (els.editProfileBtn) {
+      els.editProfileBtn.disabled = true;
+      els.editProfileBtn.textContent = "Saving...";
+    }
 
-els.logoutBtn.addEventListener("click", () => {
-  logout(ROUTES.organizerLogin);
-});
+    let updated;
+
+    try {
+      updated = await apiRequest("/user/me", {
+        method: "PUT",
+        body: JSON.stringify({
+          phoneNumber: els.phoneNumber.value.trim(),
+          website: els.website.value.trim(),
+          location: els.location.value.trim(),
+          description: els.description.value.trim()
+        })
+      });
+    } catch {
+      updated = await apiRequest("/users/me", {
+        method: "PUT",
+        body: JSON.stringify({
+          phoneNumber: els.phoneNumber.value.trim(),
+          website: els.website.value.trim(),
+          location: els.location.value.trim(),
+          description: els.description.value.trim()
+        })
+      });
+    }
+
+    fillProfile({
+      ...currentOrganizer,
+      ...updated
+    });
+
+    toggleEditMode(false);
+    setFeedback("Profile updated successfully.", "success");
+
+  } catch (error) {
+    setFeedback(error.message || "Failed to update profile.", "error");
+  } finally {
+    if (els.editProfileBtn) {
+      els.editProfileBtn.disabled = false;
+      els.editProfileBtn.textContent = "Edit Profile";
+    }
+  }
+}
+
+/* ------------------ EVENTS ------------------ */
+
+function handleEditProfile() {
+  setFeedback("");
+
+  if (!profileEditMode) {
+    toggleEditMode(true);
+    return;
+  }
+
+  saveProfile();
+}
+
+function bindUI() {
+  els.editProfileBtn?.addEventListener("click", handleEditProfile);
+
+  els.logoutBtn?.addEventListener("click", () => {
+    logout(ROUTES.organizerLogin);
+  });
+}
+
+/* ------------------ INIT ------------------ */
 
 document.addEventListener("DOMContentLoaded", async () => {
-  organizer = await requireRole("organizer", ROUTES.organizerLogin);
-  if (!organizer) return;
+  const user = await requireRole("organizer", ROUTES.organizerLogin);
+  if (!user) return;
 
-  populateProfile(organizer);
-  setEditable(false);
+  bindUI();
+  await loadProfile();
   await loadStats();
 });
